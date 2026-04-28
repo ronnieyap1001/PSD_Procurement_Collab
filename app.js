@@ -264,6 +264,7 @@ $("#rfq-form").addEventListener("submit", async (e) => {
       return;
     }
 
+    const wasNew = !state.editingRfqId;
     let rfqId = state.editingRfqId;
 
     if (rfqId) {
@@ -301,14 +302,145 @@ $("#rfq-form").addEventListener("submit", async (e) => {
       populateAllSelects();
     }
 
+    const submittedRfqId = rfqId;
     await resetForm();
     $('.tab[data-tab="rfq-list"]').click();
+    if (wasNew && submittedRfqId) {
+      await openEmailModal(submittedRfqId);
+    }
   } catch (err) {
     console.error(err);
     toast(err.message || "Failed to save", "error");
   } finally {
     submitBtn.disabled = false;
   }
+});
+
+// ----- Email draft modal ----------------------------------------------
+function buildEmailDraft(rfq, items) {
+  const sortedItems = (items || []).slice().sort((a, b) => (a.line_index || 0) - (b.line_index || 0));
+  const vendor   = rfq.suggest_vendor || "Vendor";
+  const project  = rfq.project        || "";
+  const reqType  = rfq.request_type   || "";
+  const cutoff   = fmtDate(rfq.cutoff_date);
+  const delivery = fmtDate(rfq.request_delivery_date);
+  const desc     = (rfq.description || "").trim();
+  const note     = (rfq.note        || "").trim();
+  const requestor = rfq.requestor || "";
+  const creator   = rfq.creator   || "";
+
+  const subject = `[RFQ ${rfq.rfq_number}]${project ? " " + project : ""} — Request for Quotation`;
+
+  const lines = [];
+  lines.push(`Dear ${vendor},`);
+  lines.push("");
+  lines.push(`We would like to invite you to quote for the following requirement${project ? " for project " + project : ""}.`);
+  lines.push("");
+  lines.push(`RFQ #          : ${rfq.rfq_number}`);
+  if (project)  lines.push(`Project        : ${project}`);
+  if (reqType)  lines.push(`Request Type   : ${reqType}`);
+  if (requestor)lines.push(`Requestor      : ${requestor}`);
+  if (cutoff)   lines.push(`Quote Cutoff   : ${cutoff}`);
+  if (delivery) lines.push(`Required ETA   : ${delivery}`);
+  if (desc) {
+    lines.push("");
+    lines.push("Description:");
+    lines.push(desc);
+  }
+
+  lines.push("");
+  lines.push("Items:");
+  if (sortedItems.length === 0) {
+    lines.push("  (no items)");
+  } else {
+    sortedItems.forEach((it, i) => {
+      const idx   = it.line_index || (i + 1);
+      const brand = it.brand || "-";
+      const item  = it.item  || "-";
+      const itDesc = it.item_description ? ` — ${it.item_description}` : "";
+      const qty   = it.quantity != null ? it.quantity : "-";
+      const uom   = it.uom ? ` ${it.uom}` : "";
+      const remark = it.remark ? `  [Remark: ${it.remark}]` : "";
+      lines.push(`  ${idx}. ${brand} | ${item}${itDesc} — Qty: ${qty}${uom}${remark}`);
+    });
+  }
+
+  if (note) {
+    lines.push("");
+    lines.push("Note:");
+    lines.push(note);
+  }
+
+  lines.push("");
+  lines.push(cutoff
+    ? `Kindly reply with your best offer (price, lead time, validity) by ${cutoff}.`
+    : `Kindly reply with your best offer (price, lead time, validity) at your earliest convenience.`);
+  lines.push("");
+  lines.push("Thank you & best regards,");
+  if (creator) lines.push(creator);
+
+  return { subject, body: lines.join("\n") };
+}
+
+async function openEmailModal(rfqId) {
+  try {
+    const { data: rfq, error } = await supabase
+      .from("rfq_requests")
+      .select("*, rfq_items(*)")
+      .eq("id", rfqId)
+      .single();
+    if (error) throw error;
+    const { subject, body } = buildEmailDraft(rfq, rfq.rfq_items || []);
+    $("#em-rfq-number").textContent = rfq.rfq_number || "";
+    $("#em-to").value      = "";
+    $("#em-subject").value = subject;
+    $("#em-body").value    = body;
+    $("#email-modal").classList.remove("hidden");
+    setTimeout(() => $("#em-body").focus(), 50);
+  } catch (err) {
+    console.error(err);
+    toast(err.message || "Failed to load RFQ for email", "error");
+  }
+}
+
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    toast("Copied to clipboard", "ok");
+  } catch (err) {
+    console.error(err);
+    toast("Copy failed — select and copy manually", "error");
+  }
+}
+
+$("#em-close").addEventListener("click",   () => $("#email-modal").classList.add("hidden"));
+$("#em-close-x").addEventListener("click", () => $("#email-modal").classList.add("hidden"));
+$("#email-modal").addEventListener("click", (e) => {
+  if (e.target.id === "email-modal") $("#email-modal").classList.add("hidden");
+});
+$("#em-copy-subject").addEventListener("click", () => copyText($("#em-subject").value));
+$("#em-copy-body").addEventListener("click",    () => copyText($("#em-body").value));
+$("#em-copy-all").addEventListener("click",     () => {
+  const text = `Subject: ${$("#em-subject").value}\n\n${$("#em-body").value}`;
+  copyText(text);
+});
+$("#em-open-mail").addEventListener("click", () => {
+  const to      = $("#em-to").value.trim();
+  const subject = encodeURIComponent($("#em-subject").value);
+  const body    = encodeURIComponent($("#em-body").value);
+  const href    = `mailto:${encodeURIComponent(to)}?subject=${subject}&body=${body}`;
+  window.location.href = href;
 });
 
 // ----- RFQ list view ---------------------------------------------------
@@ -348,6 +480,7 @@ function renderRfqList() {
       </td>
       <td class="row-actions">
         <button data-act="edit"   data-id="${r.id}">Edit</button>
+        <button data-act="email"  data-id="${r.id}">Email</button>
         <button data-act="delete" data-id="${r.id}" class="danger">Delete</button>
       </td>
     </tr>
@@ -379,6 +512,8 @@ $("#rfq-list-body").addEventListener("click", async (e) => {
     await loadRfqs();
   } else if (act === "edit") {
     await openRfqForEdit(id);
+  } else if (act === "email") {
+    await openEmailModal(id);
   }
 });
 
@@ -456,6 +591,7 @@ function renderItemList() {
       <td><span class="${statusClass(i.status)}">${escapeHtml(i.status)}</span></td>
       <td class="row-actions">
         <button data-act="edit-item"   data-id="${i.id}">Edit</button>
+        <button data-act="email-item"  data-id="${i.id}" data-rfq-id="${i.rfq_id}">Email</button>
         <button data-act="delete-item" data-id="${i.id}" class="danger">Delete</button>
       </td>
     </tr>
@@ -477,6 +613,9 @@ $("#item-list-body").addEventListener("click", async (e) => {
     await loadItems();
   } else if (btn.dataset.act === "edit-item") {
     openItemModal(id);
+  } else if (btn.dataset.act === "email-item") {
+    const rfqId = btn.dataset.rfqId;
+    if (rfqId) await openEmailModal(rfqId);
   }
 });
 
