@@ -208,6 +208,35 @@
           <button class="btn-primary" id="save-defaults">Save Defaults</button>
         </div>
       </div>
+      <div class="settings-defaults">
+        <h3>My Form Defaults</h3>
+        <p class="muted">These prefill the New RFQ form for you only. They are saved automatically when you submit an RFQ, and you can override them here.</p>
+        <div class="grid grid-3">
+          <label>Project
+            <select id="up-project" data-setting="projects"></select>
+          </label>
+          <label>Request Type
+            <select id="up-request-type" data-setting="request_types"></select>
+          </label>
+          <label>Requestor
+            <select id="up-requestor" data-setting="requestors"></select>
+          </label>
+          <label>Creator
+            <select id="up-creator" data-setting="creators"></select>
+          </label>
+          <label>Default UOM (new item rows)
+            <select id="up-uom" data-setting="uoms"></select>
+          </label>
+          <label>Default Suggested Vendor
+            <input type="text" id="up-vendor" list="vendors-list" placeholder="(optional)" />
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="btn-ghost"   id="up-clear">Clear my defaults</button>
+          <button class="btn-primary" id="up-save">Save my defaults</button>
+        </div>
+      </div>
+
     </section>
   </main>
 

@@ -32,7 +32,17 @@ const state = {
   rfqs:    [],
   items:   [],
   editingRfqId: null,
+  userPrefs: {
+    project:        null,
+    request_type:   null,
+    requestor:      null,
+    creator:        null,
+    suggest_vendor: null,
+    default_uom:    null,
+  },
 };
+
+const USER_PREF_KEYS = ["project", "request_type", "requestor", "creator", "suggest_vendor", "default_uom"];
 
 const SETTING_LABELS = {
   projects:      "Projects",
@@ -94,6 +104,66 @@ async function saveSetting(key, value) {
     .upsert({ key, value }, { onConflict: "key" });
   if (error) { toast(error.message, "error"); throw error; }
   state.settings[key] = value;
+}
+
+// ----- per-user preferences -------------------------------------------
+function emptyPrefs() {
+  return Object.fromEntries(USER_PREF_KEYS.map(k => [k, null]));
+}
+
+async function loadUserPrefs() {
+  state.userPrefs = emptyPrefs();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  const { data, error } = await supabase
+    .from("user_preferences")
+    .select("preferences")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (error) {
+    console.warn("user_preferences not available:", error.message);
+    return;
+  }
+  if (data?.preferences) {
+    state.userPrefs = { ...emptyPrefs(), ...data.preferences };
+  }
+}
+
+async function saveUserPrefs(patch) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  const next = { ...state.userPrefs, ...patch };
+  for (const k of Object.keys(next)) {
+    if (next[k] === "" || next[k] === undefined) next[k] = null;
+  }
+  state.userPrefs = next;
+  const { error } = await supabase
+    .from("user_preferences")
+    .upsert(
+      { user_id: user.id, preferences: next, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" }
+    );
+  if (error) {
+    console.warn("Failed to save user preferences:", error.message);
+  }
+}
+
+async function clearUserPrefs() {
+  const { data: { user } } = await supabase.auth.getUser();
+  state.userPrefs = emptyPrefs();
+  if (!user) return;
+  const { error } = await supabase
+    .from("user_preferences")
+    .delete()
+    .eq("user_id", user.id);
+  if (error) console.warn("Failed to clear user preferences:", error.message);
+}
+
+function prefValueIfAllowed(key, list) {
+  const v = state.userPrefs?.[key];
+  if (!v) return "";
+  if (!list || list.includes(v)) return v;
+  return "";
 }
 
 function populateAllSelects() {
@@ -171,7 +241,12 @@ function newItemRow(idx, item = {}) {
   const uomSel = tr.querySelector('select[name="uom"]');
   uomSel.innerHTML = `<option value="">—</option>` +
     (state.settings.uoms || []).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
-  if (item.uom) uomSel.value = item.uom;
+  if (item.uom) {
+    uomSel.value = item.uom;
+  } else {
+    const defaultUom = prefValueIfAllowed("default_uom", state.settings.uoms);
+    if (defaultUom) uomSel.value = defaultUom;
+  }
 
   tr.querySelector(".remove-row").addEventListener("click", () => {
     tr.remove();
@@ -210,12 +285,14 @@ async function resetForm({ keepNumber = false } = {}) {
   $("#cutoff-date").value           = addDays(today, state.settings.default_cutoff_days);
   $("#request-delivery-date").value = addDays(today, state.settings.default_delivery_days);
   $("#description").value = "";
-  $("#note").value = "";
-  $("#suggest-vendor").value = "";
-  $("#project").value = "";
-  $("#requestor").value = "";
-  $("#creator").value = "";
-  $("#request-type").value = "";
+  $("#note").value         = "";
+
+  const s = state.settings;
+  $("#project").value        = prefValueIfAllowed("project",      s.projects);
+  $("#requestor").value      = prefValueIfAllowed("requestor",    s.requestors);
+  $("#creator").value        = prefValueIfAllowed("creator",      s.creators);
+  $("#request-type").value   = prefValueIfAllowed("request_type", s.request_types);
+  $("#suggest-vendor").value = state.userPrefs?.suggest_vendor || "";
 
   $("#items-body").innerHTML = "";
   $("#items-body").appendChild(newItemRow(1));
@@ -308,6 +385,19 @@ $("#rfq-form").addEventListener("submit", async (e) => {
     }
 
     const submittedRfqId = rfqId;
+
+    if (wasNew) {
+      const firstUom = items.find(it => it.uom)?.uom || null;
+      await saveUserPrefs({
+        project:        header.project,
+        request_type:   header.request_type,
+        requestor:      header.requestor,
+        creator:        header.creator,
+        suggest_vendor: header.suggest_vendor,
+        ...(firstUom ? { default_uom: firstUom } : {}),
+      });
+    }
+
     await resetForm();
     $('.tab[data-tab="rfq-list"]').click();
     if (wasNew && submittedRfqId) {
@@ -693,6 +783,24 @@ function renderSettingsPanel() {
   $("#cfg-rfq-prefix").value     = state.settings.rfq_prefix;
   $("#cfg-cutoff-days").value    = state.settings.default_cutoff_days;
   $("#cfg-delivery-days").value  = state.settings.default_delivery_days;
+
+  renderMyDefaults();
+}
+
+function renderMyDefaults() {
+  const s = state.settings;
+  const setIfAllowed = (selId, key, list) => {
+    const el = $(selId);
+    if (!el) return;
+    el.value = prefValueIfAllowed(key, list);
+  };
+  setIfAllowed("#up-project",      "project",      s.projects);
+  setIfAllowed("#up-request-type", "request_type", s.request_types);
+  setIfAllowed("#up-requestor",    "requestor",    s.requestors);
+  setIfAllowed("#up-creator",      "creator",      s.creators);
+  setIfAllowed("#up-uom",          "default_uom",  s.uoms);
+  const vendorEl = $("#up-vendor");
+  if (vendorEl) vendorEl.value = state.userPrefs?.suggest_vendor || "";
 }
 
 $("#settings-grid").addEventListener("click", async (e) => {
@@ -717,6 +825,27 @@ $("#settings-grid").addEventListener("click", async (e) => {
     populateAllSelects();
     renderSettingsPanel();
   }
+});
+
+$("#up-save").addEventListener("click", async () => {
+  await saveUserPrefs({
+    project:        $("#up-project").value      || null,
+    request_type:   $("#up-request-type").value || null,
+    requestor:      $("#up-requestor").value    || null,
+    creator:        $("#up-creator").value      || null,
+    default_uom:    $("#up-uom").value          || null,
+    suggest_vendor: $("#up-vendor").value.trim() || null,
+  });
+  toast("Your defaults saved", "ok");
+  if (!state.editingRfqId) await resetForm({ keepNumber: true });
+});
+
+$("#up-clear").addEventListener("click", async () => {
+  if (!confirm("Clear your remembered form defaults?")) return;
+  await clearUserPrefs();
+  renderMyDefaults();
+  toast("Your defaults cleared", "ok");
+  if (!state.editingRfqId) await resetForm({ keepNumber: true });
 });
 
 $("#save-defaults").addEventListener("click", async () => {
@@ -833,6 +962,8 @@ async function loadAppForUser(user) {
   try {
     setEnv("connecting…");
     await loadSettings();
+    await loadUserPrefs();
+    renderMyDefaults();
     await resetForm();
     if (!realtimeChannel) realtimeChannel = subscribeRealtime();
     setEnv("connected", "ok");
@@ -853,6 +984,7 @@ function tearDownAppOnSignOut() {
   state.rfqs = [];
   state.items = [];
   state.editingRfqId = null;
+  state.userPrefs = emptyPrefs();
   $("#rfq-list-body").innerHTML = "";
   $("#item-list-body").innerHTML = "";
   $("#item-modal").classList.add("hidden");
