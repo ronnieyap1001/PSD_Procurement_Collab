@@ -209,6 +209,35 @@
     </div>
   </div>
 
+  <!-- ---------- Email Draft Modal ---------- -->
+  <div class="modal hidden" id="email-modal">
+    <div class="modal-card email-modal-card">
+      <div class="email-modal-head">
+        <h3>Email Draft for RFQ <span id="em-rfq-number"></span></h3>
+        <button type="button" class="btn-ghost" id="em-close-x" title="Close" aria-label="Close">×</button>
+      </div>
+      <p class="muted">Review and copy the text below to paste into your email client.</p>
+
+      <label>To
+        <input type="text" id="em-to" placeholder="vendor@example.com" />
+      </label>
+      <label>Subject
+        <input type="text" id="em-subject" />
+      </label>
+      <label>Body
+        <textarea id="em-body" rows="14"></textarea>
+      </label>
+
+      <div class="form-actions email-actions">
+        <button type="button" class="btn-secondary" id="em-copy-subject">Copy Subject</button>
+        <button type="button" class="btn-secondary" id="em-copy-body">Copy Body</button>
+        <button type="button" class="btn-secondary" id="em-copy-all">Copy All</button>
+        <button type="button" class="btn-primary"   id="em-open-mail">Open in Mail</button>
+        <button type="button" class="btn-ghost"     id="em-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script type="module" src="app.js"></script>
